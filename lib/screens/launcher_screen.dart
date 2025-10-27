@@ -2,6 +2,9 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:url_launcher/url_launcher.dart';
+import 'package:android_intent_plus/android_intent.dart';
+import 'package:android_intent_plus/flag.dart';
 import 'package:intl/intl.dart';
 import '../widgets/clock_widget.dart';
 import 'hotel_info_screen.dart';
@@ -52,7 +55,7 @@ class _LauncherScreenState extends State<LauncherScreen> {
     {'icon': Icons.tv, 'label': 'TV'},
     {'icon': Icons.music_note, 'label': 'Cubmu'},
     {'icon': Icons.restaurant, 'label': 'Restaurant'},
-    {'icon': Icons.wifi, 'label': 'Wifi'},
+    // {'icon': Icons.wifi, 'label': 'Wifi'},
     {'icon': Icons.play_circle_fill, 'label': 'Youtube'},
     {'icon': Icons.child_care, 'label': 'Youtube Kids'},
     {'icon': Icons.movie, 'label': 'Netflix'},
@@ -78,12 +81,18 @@ class _LauncherScreenState extends State<LauncherScreen> {
       guestName = widget.guestName ?? guestName;
       backgroundUrl = widget.backgroundUrl ?? backgroundUrl;
 
-      if (deviceId == null) {
-        final config = await api.getDeviceConfigAuto();
-        deviceId = config['device_id'];
+      // 🔧 Jika deviceId kosong → hentikan atau tampilkan log
+      if (deviceId == null || deviceId!.isEmpty) {
+        print("⚠️ Device ID belum diisi. Tidak bisa ambil config.");
+        return;
       }
 
+      // 🔹 Ambil konfigurasi berdasarkan deviceId
+      final config = await api.getDeviceConfigAuto(deviceId!);
+      print("⚙️ Config fetched: $config");
+
       final launcherData = await api.getLauncherData(deviceId!);
+      if (!mounted) return;
       final hotel = launcherData['hotel'] ?? {};
       final room = launcherData['room'] ?? {};
 
@@ -111,12 +120,13 @@ class _LauncherScreenState extends State<LauncherScreen> {
     }
   }
 
-  /// 🔹 MQTT listener
+  /// 🔹 MQTT listener (revisi: ignore video_update, only apply background from content_update)
   Future<void> _initializeMqtt() async {
     if (_isMqttConnected ||
         deviceId == null ||
         hotelId == null ||
-        roomId == null)
+        roomId == null ||
+        !mounted)
       return;
 
     _isMqttConnected = true;
@@ -128,44 +138,231 @@ class _LauncherScreenState extends State<LauncherScreen> {
       hotelId: hotelId!,
       roomId: roomId!,
       onMessage: (data) async {
+        if (!mounted) return;
         final event = data['event'];
         print("⚡ MQTT Event (Launcher): $event | Data: $data");
 
         if (!mounted) return;
 
-        setState(() {
-          if (event == 'checkin' || event == 'launcher_update') {
+        // --- IGNORE video_update explicitly (log only) ---
+        if (event == 'video_update') {
+          print(
+            "ℹ️ Ignoring MQTT event video_update on Launcher (not used for background).",
+          );
+          return;
+        }
+
+        // --- HANDLE content_update (only this event updates background from banners) ---
+        if (event == 'content_update') {
+          print("🧩 Content update received!");
+
+          String? newBg;
+
+          // Ambil banner pertama (jika ada)
+          if (data['banners'] != null &&
+              data['banners'] is List &&
+              (data['banners'] as List).isNotEmpty) {
+            final banners = data['banners'] as List;
+            final first = banners.first;
+            // safety: check keys and types
+            if (first != null &&
+                first is Map &&
+                first['image_url'] != null &&
+                first['image_url'].toString().isNotEmpty) {
+              newBg = first['image_url'].toString();
+              print("🖼️ Banner image URL → $newBg");
+            }
+          }
+
+          // Update running text immediately if present (safe to setState)
+          if (data['text_running'] != null &&
+              data['text_running'].toString().isNotEmpty) {
+            if (!mounted) return;
+            setState(() {
+              textRunning = data['text_running'].toString();
+              print("💬 Running text updated → $textRunning");
+            });
+          }
+
+          // Jika ada newBg yang valid -> precache & apply (di luar setState)
+          if (newBg != null && newBg.isNotEmpty) {
+            // _updateBackgroundSafely akan mem-precache dan memanggil setState sendiri
+            _updateBackgroundSafely(newBg);
+          } else {
+            print(
+              "⚠️ No valid banner image in content_update; keeping existing background.",
+            );
+          }
+
+          return;
+        }
+
+        // --- OTHER EVENTS: checkin, launcher_update, checkout (tidak mengubah background) ---
+        if (event == 'checkin' || event == 'launcher_update') {
+          if (!mounted) return;
+          setState(() {
             if (data['guest_name'] != null &&
                 data['guest_name'].toString().isNotEmpty) {
-              guestName = data['guest_name'];
+              guestName = data['guest_name'].toString();
             }
-
             if (data['room_number'] != null &&
                 data['room_number'].toString().isNotEmpty) {
               roomNumber = data['room_number'].toString();
             }
+          });
+          return;
+        }
 
-            final newBg = data['background_image_url'];
-            if (newBg != null && newBg.toString().isNotEmpty) {
-              backgroundUrl = newBg;
-            }
-
-            // 🆕 Update text running jika ada
-            if (data['text_running'] != null &&
-                data['text_running'].toString().isNotEmpty) {
-              textRunning = data['text_running'];
-              print("💬 Running text updated → $textRunning");
-            }
-          } else if (event == 'checkout') {
+        if (event == 'checkout') {
+          if (!mounted) return;
+          setState(() {
             guestName = null;
-          }
-        });
+          });
+          return;
+        }
+
+        // Jika event lain yang tidak terduga muncul
+        print("ℹ️ Unknown MQTT event: $event");
       },
     );
   }
 
+  /// Precache image first, then update backgroundUrl (prevents flicker)
+  Future<void> _updateBackgroundSafely(String newUrl) async {
+    try {
+      if (newUrl.isEmpty) return;
+
+      // kalau sama dengan yang sedang terpasang, skip
+      if (backgroundUrl != null && backgroundUrl == newUrl) return;
+
+      print("🧩 Pre-caching background: $newUrl");
+
+      final image = NetworkImage(newUrl);
+      // timeout agar tidak menggantung terlalu lama
+      final precacheFuture = precacheImage(image, context);
+      await precacheFuture.timeout(
+        const Duration(seconds: 6),
+        onTimeout: () {
+          print("⚠️ Precache timed out for $newUrl");
+          throw TimeoutException("Precache timeout");
+        },
+      );
+
+      if (!mounted) return;
+
+      setState(() {
+        backgroundUrl = newUrl;
+        print("✅ Background applied: $backgroundUrl");
+      });
+    } catch (e) {
+      print("❌ Failed to precache/apply background: $e");
+      // jangan hapus background lama kalau gagal
+    }
+  }
+
+  Future<void> _launchExternalApp(String url) async {
+    final Uri uri = Uri.parse(url);
+    if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+      print('❌ Tidak dapat membuka aplikasi eksternal: $url');
+    } else {
+      print('✅ Membuka aplikasi eksternal: $url');
+    }
+  }
+
+  Future<void> _openTransVisionApp() async {
+    try {
+      const packageName = 'com.livetv.trvddm';
+      const activityName = '.Login';
+
+      final intent = AndroidIntent(
+        action: 'android.intent.action.MAIN',
+        package: packageName,
+        componentName: '$packageName$activityName',
+        flags: <int>[Flag.FLAG_ACTIVITY_NEW_TASK],
+      );
+
+      await intent.launch();
+      // print('✅ Berhasil membuka TransVision');
+    } catch (e) {
+      // print('❌ Gagal membuka TransVision: $e');
+    }
+  }
+
+  Future<void> _openAppOrWeb({
+    required String appUrl,
+    required String webUrl,
+  }) async {
+    try {
+      final Uri appUri = Uri.parse(appUrl);
+      final Uri webUri = Uri.parse(webUrl);
+
+      // Cek apakah aplikasi terpasang
+      if (await canLaunchUrl(appUri)) {
+        await launchUrl(appUri, mode: LaunchMode.externalApplication);
+        print('✅ Membuka aplikasi: $appUrl');
+      } else {
+        print('⚠️ App tidak terpasang, buka web fallback...');
+        await launchUrl(webUri, mode: LaunchMode.externalApplication);
+      }
+    } catch (e) {
+      print('❌ Gagal membuka app/web: $e');
+    }
+  }
+
+  void _handleMenuTap(Map<String, dynamic> item) async {
+    switch (item['label']) {
+      case 'Hotel Info':
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => HotelInfoScreen(
+              hotelId: hotelId,
+              roomId: roomId,
+              deviceId: deviceId,
+              hotelName: hotelName,
+              guestName: guestName,
+              roomNumber: roomNumber,
+              backgroundUrl: backgroundUrl,
+            ),
+          ),
+        );
+        break;
+
+      case 'TV':
+        await _openTransVisionApp();
+        break;
+
+      case 'Youtube':
+        await _launchExternalApp('vnd.youtube://');
+        break;
+
+      case 'Youtube Kids':
+        await _openAppOrWeb(
+          appUrl: 'vnd.youtube.kids://',
+          webUrl: 'https://www.youtubekids.com/',
+        );
+        break;
+
+      case 'Netflix':
+        await _launchExternalApp('https://www.netflix.com/id-en/');
+        break;
+
+      case 'Vidio.com':
+        await _launchExternalApp('https://www.vidio.com/');
+        break;
+
+      case 'Cubmu':
+        await _launchExternalApp('https://cubmu.com/');
+        break;
+
+      default:
+        print('⚠️ Tidak ada aksi untuk ${item['label']}');
+    }
+  }
+
   @override
   void dispose() {
+    _isMqttConnected = false;
     MqttManager.instance.disconnect();
     super.dispose();
   }
@@ -179,7 +376,7 @@ class _LauncherScreenState extends State<LauncherScreen> {
           final height = constraints.maxHeight;
           final base = (width + height) / 200;
 
-          final iconSize = base * 3.2;
+          final iconSize = base * 4.5;
           final fontSize = base * 1.0;
           final barHeight = base * 8.5;
           final padding = base * 2.0;
@@ -200,8 +397,40 @@ class _LauncherScreenState extends State<LauncherScreen> {
             backgroundColor: Colors.black,
             body: Stack(
               children: [
+                // AnimatedSwitcher(
+                //   duration: const Duration(milliseconds: 600),
+                //   child: (backgroundUrl != null && backgroundUrl!.isNotEmpty)
+                //       ? Image.network(
+                //           backgroundUrl!,
+                //           key: ValueKey(backgroundUrl),
+                //           fit: BoxFit.cover,
+                //           width: double.infinity,
+                //           height: double.infinity,
+                //           errorBuilder: (_, __, ___) =>
+                //               Container(color: Colors.blue),
+                //         )
+                //       : Container(color: Colors.blue),
+                // ),
                 AnimatedSwitcher(
                   duration: const Duration(milliseconds: 600),
+                  switchInCurve: Curves.easeIn,
+                  switchOutCurve: Curves.easeOut,
+                  layoutBuilder:
+                      (Widget? currentChild, List<Widget> previousChildren) {
+                        // gunakan Stack supaya tidak ada animasi ukuran/lay out
+                        return Stack(
+                          fit: StackFit.expand,
+                          children: <Widget>[
+                            ...previousChildren,
+                            if (currentChild != null) currentChild,
+                          ],
+                        );
+                      },
+                  transitionBuilder:
+                      (Widget child, Animation<double> animation) {
+                        // hanya fade, no scale/size
+                        return FadeTransition(opacity: animation, child: child);
+                      },
                   child: (backgroundUrl != null && backgroundUrl!.isNotEmpty)
                       ? Image.network(
                           backgroundUrl!,
@@ -209,6 +438,11 @@ class _LauncherScreenState extends State<LauncherScreen> {
                           fit: BoxFit.cover,
                           width: double.infinity,
                           height: double.infinity,
+                          loadingBuilder: (context, child, loadingProgress) {
+                            if (loadingProgress == null) return child;
+                            // selama loading, tampilkan placeholder hitam (menghindari blank putih)
+                            return Container(color: Colors.black);
+                          },
                           errorBuilder: (_, __, ___) =>
                               Container(color: Colors.black),
                         )
@@ -303,60 +537,89 @@ class _LauncherScreenState extends State<LauncherScreen> {
                               final item = menuItems[index];
                               final isSelected = selectedIndex == index;
 
-                              return GestureDetector(
-                                onTap: () {
-                                  if (item['label'] == 'Hotel Info') {
-                                    Navigator.push(
-                                      context,
-                                      MaterialPageRoute(
-                                        builder: (_) => HotelInfoScreen(
-                                          hotelId: hotelId,
-                                          roomId: roomId,
-                                          deviceId: deviceId,
-                                          hotelName: hotelName,
-                                          guestName: guestName,
-                                          roomNumber: roomNumber,
-                                          backgroundUrl: backgroundUrl,
-                                        ),
-                                      ),
-                                    );
+                              return Focus(
+                                autofocus:
+                                    index == 0, // Fokus awal di item pertama
+                                onKeyEvent: (node, event) {
+                                  if (event is KeyDownEvent) {
+                                    if (event.logicalKey ==
+                                        LogicalKeyboardKey.arrowRight) {
+                                      setState(() {
+                                        selectedIndex =
+                                            (selectedIndex + 1) %
+                                            menuItems.length;
+                                      });
+                                      return KeyEventResult.handled;
+                                    } else if (event.logicalKey ==
+                                        LogicalKeyboardKey.arrowLeft) {
+                                      setState(() {
+                                        selectedIndex =
+                                            (selectedIndex -
+                                                1 +
+                                                menuItems.length) %
+                                            menuItems.length;
+                                      });
+                                      return KeyEventResult.handled;
+                                    } else if (event.logicalKey ==
+                                            LogicalKeyboardKey.enter ||
+                                        event.logicalKey ==
+                                            LogicalKeyboardKey.select) {
+                                      _handleMenuTap(item);
+                                      return KeyEventResult.handled;
+                                    }
                                   }
+                                  return KeyEventResult.ignored;
                                 },
-                                child: MouseRegion(
-                                  onEnter: (_) =>
+                                child: GestureDetector(
+                                  onTap: () => _handleMenuTap(item),
+                                  onTapDown: (_) =>
                                       setState(() => selectedIndex = index),
-                                  onExit: (_) =>
-                                      setState(() => selectedIndex = -1),
-                                  child: Column(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      AnimatedScale(
-                                        scale: isSelected ? 1.15 : 1.0,
-                                        duration: const Duration(
-                                          milliseconds: 150,
+                                  child: AnimatedContainer(
+                                    duration: const Duration(milliseconds: 200),
+                                    padding: EdgeInsets.all(base * 0.5),
+                                    decoration: BoxDecoration(
+                                      color: isSelected
+                                          ? Colors.white.withOpacity(0.2)
+                                          : Colors.transparent,
+                                      borderRadius: BorderRadius.circular(base),
+                                      border: isSelected
+                                          ? Border.all(
+                                              color: Colors.white54,
+                                              width: 2,
+                                            )
+                                          : null,
+                                    ),
+                                    child: Column(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        AnimatedScale(
+                                          scale: isSelected ? 1.15 : 1.0,
+                                          duration: const Duration(
+                                            milliseconds: 150,
+                                          ),
+                                          child: Icon(
+                                            item['icon'],
+                                            color: isSelected
+                                                ? Colors.white
+                                                : Colors.white70,
+                                            size: iconSize,
+                                          ),
                                         ),
-                                        child: Icon(
-                                          item['icon'],
-                                          color: isSelected
-                                              ? Colors.white
-                                              : Colors.white70,
-                                          size: iconSize,
+                                        SizedBox(height: base * 0.6),
+                                        AnimatedDefaultTextStyle(
+                                          duration: const Duration(
+                                            milliseconds: 200,
+                                          ),
+                                          style: GoogleFonts.poppins(
+                                            color: isSelected
+                                                ? Colors.white
+                                                : Colors.white70,
+                                            fontSize: fontSize,
+                                          ),
+                                          child: Text(item['label']),
                                         ),
-                                      ),
-                                      SizedBox(height: base * 0.6),
-                                      AnimatedDefaultTextStyle(
-                                        duration: const Duration(
-                                          milliseconds: 200,
-                                        ),
-                                        style: GoogleFonts.poppins(
-                                          color: isSelected
-                                              ? Colors.white
-                                              : Colors.white70,
-                                          fontSize: fontSize,
-                                        ),
-                                        child: Text(item['label']),
-                                      ),
-                                    ],
+                                      ],
+                                    ),
                                   ),
                                 ),
                               );
@@ -406,7 +669,7 @@ class _RunningTextBarState extends State<_RunningTextBar> {
 
   void _startScrolling() {
     const double scrollSpeed = 50; // pixel per second
-    const Duration frameRate = Duration(milliseconds: 30);
+    const Duration frameRate = Duration(milliseconds: 10);
 
     double position = 0;
     _timer = Timer.periodic(frameRate, (timer) {
@@ -425,6 +688,7 @@ class _RunningTextBarState extends State<_RunningTextBar> {
 
   @override
   void dispose() {
+    print("🧹 LauncherScreen disposed");
     _timer?.cancel();
     _scrollController.dispose();
     super.dispose();
@@ -452,7 +716,6 @@ class _RunningTextBarState extends State<_RunningTextBar> {
             ),
           ),
           const SizedBox(width: 80),
-          // Tambah teks kedua biar efek looping mulus
           Text(
             widget.text,
             style: GoogleFonts.poppins(

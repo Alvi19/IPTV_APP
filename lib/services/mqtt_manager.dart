@@ -59,12 +59,19 @@ class MqttManager {
   String? currentBackgroundUrl;
   String? currentLogoUrl;
 
+  bool _isConnected = false;
+
   Future<void> connect({
     required String deviceId,
     required int hotelId,
     required int roomId,
     required Function(Map<String, dynamic>) onMessage,
   }) async {
+    if (_isConnected) {
+      print("⚠️ MQTT sudah terkoneksi, abaikan reconnect.");
+      return;
+    }
+
     print("🚀 MQTT init for Device: $deviceId → Hotel $hotelId, Room $roomId");
 
     await _mqtt.connect(
@@ -74,13 +81,15 @@ class MqttManager {
       username: 'username',
       password: 'Password123',
       topics: [
-        'hotel/$hotelId/room/$roomId', // khusus room ini
-        'hotel/$hotelId/global', // broadcast semua kamar
-        'hotel/$hotelId/launcher', // update global launcher
-        'hotel/$hotelId/video', // update video
+        'hotel/$hotelId/room/$roomId',
+        'hotel/$hotelId/global',
+        'hotel/$hotelId/launcher',
+        'hotel/$hotelId/video',
         'hotel/$hotelId/launcher/update-background',
       ],
       onMessage: (data) {
+        if (!_isConnected)
+          return; // 🛑 Jangan panggil callback setelah disconnect
         print("📨 MQTT Message Received: $data");
 
         try {
@@ -103,29 +112,32 @@ class MqttManager {
                 break;
 
               case 'content_update':
-                print("📰 Received content update from MQTT:");
-                print(data);
-                // ✅ Kirim data ke callback handler biar Flutter UI update
-                onMessage(data);
+                print("📰 Received content update from MQTT");
                 break;
 
               default:
                 print("ℹ️ Unknown MQTT event: $event");
-                onMessage(data);
+                break;
             }
           }
 
-          // Teruskan pesan ke handler aslinya
+          // ✅ Hanya panggil callback sekali
           onMessage(data);
         } catch (e) {
           print("⚠️ Error in onMessage handler: $e");
         }
       },
     );
+
+    _isConnected = true;
   }
 
   void disconnect() {
+    if (!_isConnected) return;
     print("🔌 Disconnecting MQTT...");
+    _isConnected = false;
     _mqtt.disconnect();
   }
+
+  bool get isConnected => _isConnected;
 }

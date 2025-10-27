@@ -1,109 +1,107 @@
-import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:video_player/video_player.dart';
 import '../services/api_service.dart';
 import '../services/mqtt_manager.dart';
 import 'launcher_screen.dart';
+import 'device_input_screen.dart';
 import '../widgets/clock_widget.dart';
 import 'package:intl/intl.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 class IdleScreen extends StatefulWidget {
-  const IdleScreen({super.key});
+  final String deviceId;
+
+  const IdleScreen({super.key, required this.deviceId});
 
   @override
   State<IdleScreen> createState() => _IdleScreenState();
 }
 
-class _IdleScreenState extends State<IdleScreen> {
+class _IdleScreenState extends State<IdleScreen>
+    with SingleTickerProviderStateMixin {
   final ApiService api = ApiService();
   VideoPlayerController? _controller;
   bool _isMqttConnected = false;
   bool _videoReady = false;
+  bool _isDisposed = false;
+  final FocusNode _focusNode = FocusNode();
 
   String? customerName;
   String? roomNumber;
-  String? deviceId;
   String? videoUrl;
   String? logoUrl;
-  String? background_image_url;
+  String? backgroundImageUrl;
   String? hotelName;
   int? hotelId;
   int? roomId;
 
+  late AnimationController _pulseController;
+
   @override
   void initState() {
     super.initState();
-    _initializeData();
+    _pulseController = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 1),
+    )..repeat(reverse: true);
+    _initializeData(widget.deviceId);
   }
 
-  /// ✅ Ambil data awal dan setup MQTT
-  Future<void> _initializeData() async {
+  Future<void> _initializeData(String deviceId) async {
     try {
-      print("🔍 Fetching device config...");
-      final config = await api.getDeviceConfigAuto();
-      deviceId = config['device_id'];
-      print("✅ Device ID: $deviceId");
+      print("📱 Device ID aktif: $deviceId");
+      await api.registerDevice(deviceId);
 
-      final launcherData = await api.getLauncherData(deviceId!);
+      final config = await api.getDeviceConfigAuto(deviceId);
+      print("⚙️ Config: $config");
+
+      final launcherData = await api.getLauncherData(deviceId);
+      print("🏨 Launcher data: $launcherData");
+
       final hotel = launcherData['hotel'] ?? {};
       final room = launcherData['room'] ?? {};
 
       hotelId = hotel['id'];
-      hotelName = hotel['name'];
+      hotelName = hotel['name'] ?? "Welcome Guest";
       videoUrl = hotel['video_url'];
       logoUrl = hotel['logo_url'];
-      background_image_url = hotel['background_image_url'];
+      backgroundImageUrl = hotel['background_image_url'];
       roomId = room['id'];
       customerName = room['guest_name'];
       roomNumber = room['number']?.toString();
 
-      print("🏨 Hotel: $hotelName");
-      print("🎞️ Video URL: $videoUrl");
-
-      if (videoUrl != null && videoUrl!.isNotEmpty) {
-        await _initializeVideo(videoUrl!);
-      } else {
-        print("⚠️ No video URL found from API");
+      if (videoUrl == null || videoUrl!.isEmpty) {
+        videoUrl =
+            "http://10.87.232.10:8000/storage/uploads/videos/default_video.mp4";
+        print("🎬 Menggunakan video default: $videoUrl");
       }
 
+      await _initializeVideo(videoUrl!);
       await _initializeMqtt();
     } catch (e) {
       print("❌ Error initializing IdleScreen: $e");
     }
   }
 
-  /// ✅ Inisialisasi VideoPlayerController dengan URL dari API
   Future<void> _initializeVideo(String url) async {
-    print("🎬 Initializing video player...");
-
     try {
-      // ✅ Tunggu 300ms setelah masuk ke halaman untuk memastikan context stabil
-      await Future.delayed(const Duration(milliseconds: 300));
-
-      // Hentikan dan dispose video lama kalau ada
-      if (_controller != null) {
-        try {
-          await _controller!.pause();
-          await _controller!.dispose();
-        } catch (e) {
-          print("⚠️ Error disposing previous video: $e");
-        }
-        _controller = null;
-        await Future.delayed(const Duration(milliseconds: 200));
-      }
-
-      if (!mounted) return;
-
-      // ✅ Tambahkan timestamp agar video tidak di-cache
       final uri = Uri.parse("$url?ts=${DateTime.now().millisecondsSinceEpoch}");
       print("🎞️ Loading video from $uri");
 
-      final newController = VideoPlayerController.networkUrl(uri);
+      final oldController = _controller;
+      _controller = null;
+      if (oldController != null) {
+        try {
+          await oldController.pause();
+          await oldController.dispose();
+        } catch (_) {}
+      }
 
+      final newController = VideoPlayerController.networkUrl(uri);
       await newController.initialize();
 
-      if (!mounted) {
+      if (!mounted || _isDisposed) {
         await newController.dispose();
         return;
       }
@@ -117,70 +115,48 @@ class _IdleScreenState extends State<IdleScreen> {
         _videoReady = true;
       });
 
-      print("✅ Video ready (source: ${newController.dataSource})");
+      print("✅ Video siap diputar");
     } catch (e) {
-      print("❌ Failed to initialize video: $e");
+      print("❌ Gagal memuat video: $e");
       setState(() => _videoReady = false);
     }
   }
 
-  /// ✅ Setup koneksi MQTT
   Future<void> _initializeMqtt() async {
-    if (_isMqttConnected ||
-        hotelId == null ||
-        roomId == null ||
-        deviceId == null)
-      return;
+    if (_isMqttConnected || _isDisposed) return;
     _isMqttConnected = true;
 
     await MqttManager.instance.connect(
-      deviceId: deviceId!,
-      hotelId: hotelId!,
-      roomId: roomId!,
+      deviceId: widget.deviceId,
+      hotelId: hotelId ?? 0,
+      roomId: roomId ?? 0,
       onMessage: (data) async {
+        if (!mounted || _isDisposed) return;
         final event = data['event'];
-        print("⚡ MQTT Event (IdleScreen): $event | Payload: $data");
-
-        if (!mounted) return;
+        print("⚡ MQTT Event: $event | Payload: $data");
 
         if (event == 'video_update' && data['video_url'] != null) {
           await _initializeVideo(data['video_url']);
-        } else if (event == 'checkin' ||
-            event == 'launcher_update' ||
+        } else if (event == 'launcher_update' ||
+            event == 'checkin' ||
             event == 'checkout') {
           setState(() {
             if (event == 'checkout') {
-              // Hanya kosongkan saat checkout
-              customerName = null;
-            } else if (event == 'checkin') {
-              // Update dari MQTT checkin
-              customerName = data['guest_name'] ?? customerName;
-              roomNumber = data['room_number']?.toString() ?? roomNumber;
-            } else if (event == 'launcher_update') {
-              // Jika ada guest baru
-              if (data['guest_name'] != null &&
-                  data['guest_name'].toString().isNotEmpty) {
+              customerName = "Guest";
+            } else {
+              if (data['guest_name'] != null) {
                 customerName = data['guest_name'];
               }
-
-              // ✅ Update background image (bukan logo)
-              if (data['background_image_url'] != null &&
-                  data['background_image_url'].toString().isNotEmpty) {
-                background_image_url = data['background_image_url'];
-                print(
-                  "🖼️ Updated background from MQTT → $background_image_url",
-                );
+              if (data['room_number'] != null) {
+                roomNumber = data['room_number'].toString();
               }
+            }
 
-              // ✅ Kalau ada logo hotel baru (optional)
-              if (data['logo_url'] != null &&
-                  data['logo_url'].toString().isNotEmpty) {
-                logoUrl = data['logo_url'];
-                print("🏨 Updated logo from MQTT → $logoUrl");
-              }
-
-              // Tetap update nomor kamar
-              roomNumber = data['room_number']?.toString() ?? roomNumber;
+            if (data['background_image_url'] != null) {
+              backgroundImageUrl = data['background_image_url'];
+            }
+            if (data['logo_url'] != null) {
+              logoUrl = data['logo_url'];
             }
           });
         }
@@ -188,46 +164,13 @@ class _IdleScreenState extends State<IdleScreen> {
     );
   }
 
-  /// ✅ Bersihkan video + MQTT saat keluar
-  Future<void> _disposeVideo() async {
-    try {
-      if (_controller != null) {
-        print("🧹 Stopping video before navigation...");
-        await _controller!.pause();
-        await Future.delayed(const Duration(milliseconds: 150));
-        await _controller!.dispose();
-        _controller = null;
-        print("✅ Video stopped cleanly");
-      }
-    } catch (e) {
-      print("⚠️ Error disposing video: $e");
-    }
-  }
-
-  @override
-  void dispose() {
-    super.dispose();
-    MqttManager.instance.disconnect();
-
-    Future.microtask(() async {
-      try {
-        if (_controller != null) {
-          await _controller!.pause();
-          await Future.delayed(const Duration(milliseconds: 100));
-          await _controller!.dispose();
-          print("🧹 Video controller disposed cleanly on IdleScreen exit");
-        }
-        _controller = null;
-      } catch (e) {
-        print("⚠️ Error disposing controller in IdleScreen: $e");
-      }
-    });
-  }
-
-  /// ✅ Navigasi aman ke Launcher (tanpa suara sisa)
   Future<void> _goToLauncher(BuildContext context) async {
-    await _disposeVideo();
-
+    if (_controller != null) {
+      try {
+        await _controller!.pause();
+        await _controller!.dispose();
+      } catch (_) {}
+    }
     if (!mounted) return;
 
     Navigator.of(context).pushReplacement(
@@ -237,51 +180,68 @@ class _IdleScreenState extends State<IdleScreen> {
           roomId: roomId,
           guestName: customerName,
           roomNumber: roomNumber,
-          backgroundUrl:
-              background_image_url, // ✅ gunakan background, bukan logo
-          deviceId: deviceId,
+          backgroundUrl: backgroundImageUrl,
+          deviceId: widget.deviceId,
         ),
         transitionsBuilder: (_, animation, __, child) =>
             FadeTransition(opacity: animation, child: child),
-        transitionDuration: const Duration(milliseconds: 600),
+        transitionDuration: const Duration(milliseconds: 500),
       ),
     );
+  }
+
+  void _handleRemoteKey(RawKeyEvent event) async {
+    if (event is RawKeyDownEvent) {
+      if (event.logicalKey == LogicalKeyboardKey.enter ||
+          event.logicalKey == LogicalKeyboardKey.select ||
+          event.logicalKey.keyLabel.toLowerCase().contains("dpad") ||
+          event.logicalKey.keyLabel.toLowerCase().contains("center")) {
+        await _goToLauncher(context);
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _isDisposed = true;
+    _pulseController.dispose();
+    _focusNode.dispose();
+    MqttManager.instance.disconnect();
+    try {
+      _controller?.dispose();
+    } catch (_) {}
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     final screen = MediaQuery.of(context).size;
     final base = (screen.width + screen.height) / 200;
-    final now = DateTime.now();
-    final formattedDate = DateFormat('EEE, d MMM yyyy').format(now);
+    final formattedDate = DateFormat('EEE, d MMM yyyy').format(DateTime.now());
 
-    // Jika controller belum siap → tampilkan loading
-    if (_controller == null || !_controller!.value.isInitialized) {
+    if (!_videoReady || _controller == null) {
       return const Scaffold(
         backgroundColor: Colors.black,
-        body: Center(
-          child: Text(
-            "Loading video...",
-            style: TextStyle(color: Colors.white70, fontSize: 16),
-          ),
-        ),
+        body: Center(child: CircularProgressIndicator(color: Colors.white)),
       );
     }
 
-    final isGuestCheckedIn = customerName != null && customerName!.isNotEmpty;
-    final welcomeText = isGuestCheckedIn
-        ? "Welcome ${customerName!}"
-        : "Welcome to $hotelName";
+    final guest = customerName ?? "Guest";
+    final room = roomNumber ?? "-";
 
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: Stack(
-        children: [
-          /// 🎥 Background video — hanya tampil jika controller siap
-          if (_controller != null && _controller!.value.isInitialized)
+    return RawKeyboardListener(
+      focusNode: _focusNode,
+      autofocus: true,
+      onKey: _handleRemoteKey,
+      child: Scaffold(
+        backgroundColor: Colors.black,
+        body: Stack(
+          alignment: Alignment.center,
+          children: [
+            // 🎥 Background video
             SizedBox.expand(
               child: FittedBox(
-                fit: BoxFit.cover,
+                fit: BoxFit.fill,
                 child: SizedBox(
                   width: _controller!.value.size.width,
                   height: _controller!.value.size.height,
@@ -290,101 +250,155 @@ class _IdleScreenState extends State<IdleScreen> {
               ),
             ),
 
-          /// 🔝 Logo & Clock
-          Positioned(
-            top: base * 2.0,
-            left: base * 2.0,
-            right: base * 2.0,
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                if (logoUrl != null && logoUrl!.isNotEmpty)
-                  Image.network(
-                    logoUrl!,
-                    width: base * 20,
-                    fit: BoxFit.contain,
-                    errorBuilder: (_, __, ___) => const SizedBox(),
-                  ),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    const ClockWidget(),
-                    SizedBox(height: base * 0.4),
-                    Text(
-                      formattedDate,
-                      style: GoogleFonts.poppins(
-                        color: Colors.white.withOpacity(0.9),
-                        fontSize: base * 2.0,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-
-          /// 🧍 Guest Info
-          Align(
-            alignment: Alignment.centerRight,
-            child: Padding(
-              padding: EdgeInsets.only(right: base * 3),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.end,
+            // 🔝 Logo & Clock
+            Positioned(
+              top: base * 2,
+              left: base * 2,
+              right: base * 2,
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Text(
-                    welcomeText,
-                    textAlign: TextAlign.right,
-                    style: GoogleFonts.poppins(
-                      color: Colors.white,
-                      fontSize: base * 3.0,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  SizedBox(height: base * 0.6),
-                  Text(
-                    "Room ${roomNumber ?? '-'}",
-                    style: GoogleFonts.poppins(
-                      color: Colors.white70,
-                      fontSize: base * 2.0,
-                    ),
+                  if (logoUrl != null && logoUrl!.isNotEmpty)
+                    Image.network(logoUrl!, width: base * 18),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      const ClockWidget(),
+                      SizedBox(height: base * 0.4),
+                      Text(
+                        formattedDate,
+                        style: GoogleFonts.poppins(
+                          color: Colors.white.withOpacity(0.9),
+                          fontSize: base * 2.0,
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),
             ),
-          ),
 
-          /// 🔘 Continue Button
-          Align(
-            alignment: Alignment.bottomLeft,
-            child: Padding(
-              padding: EdgeInsets.only(bottom: base, left: base * 1.5),
-              child: OutlinedButton(
-                onPressed: () async => _goToLauncher(context),
-                style: OutlinedButton.styleFrom(
-                  side: BorderSide(color: Colors.white, width: base * 0.2),
-                  padding: EdgeInsets.symmetric(
-                    horizontal: base * 5,
-                    vertical: base * 2,
-                  ),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(base * 2),
+            // 🧍 Guest info
+            Positioned(
+              right: 0,
+              bottom: base * 5,
+              child: Container(
+                padding: EdgeInsets.symmetric(
+                  vertical: base * 1.2,
+                  horizontal: base * 15,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.black.withOpacity(0.55),
+                  borderRadius: BorderRadius.only(
+                    topLeft: Radius.circular(base * 5.5),
+                    bottomLeft: Radius.circular(base * 5.5),
                   ),
                 ),
-                child: Text(
-                  "CLICK OK TO CONTINUE",
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: base * 2.2,
-                    letterSpacing: 2,
-                    fontWeight: FontWeight.bold,
-                  ),
+                child: Column(
+                  children: [
+                    Text(
+                      "Wilujeng Sumping,",
+                      style: GoogleFonts.poppins(
+                        color: Colors.white,
+                        fontSize: base * 2.9,
+                        fontStyle: FontStyle.italic,
+                      ),
+                    ),
+                    Text(
+                      guest,
+                      style: GoogleFonts.poppins(
+                        color: Colors.white,
+                        fontSize: base * 3.5,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    Text(
+                      "Room $room",
+                      style: GoogleFonts.poppins(
+                        color: Colors.white70,
+                        fontSize: base * 2.5,
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ),
-          ),
-        ],
+
+            // 🔘 Tombol ENTER (PULSE ANIMASI)
+            Positioned(
+              bottom: base * 12,
+              child: GestureDetector(
+                onTap: () async => _goToLauncher(context),
+                child: Column(
+                  children: [
+                    ScaleTransition(
+                      scale: Tween(begin: 0.9, end: 1.1).animate(
+                        CurvedAnimation(
+                          parent: _pulseController,
+                          curve: Curves.easeInOut,
+                        ),
+                      ),
+                      child: Container(
+                        padding: EdgeInsets.symmetric(
+                          horizontal: base * 8,
+                          vertical: base * 2.2,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.yellow.shade700,
+                          borderRadius: BorderRadius.circular(base * 2),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.yellow.withOpacity(0.5),
+                              blurRadius: 20,
+                              spreadRadius: 3,
+                            ),
+                          ],
+                        ),
+                        child: Text(
+                          "ENTER",
+                          style: GoogleFonts.poppins(
+                            color: Colors.black,
+                            fontSize: base * 3.5,
+                            fontWeight: FontWeight.bold,
+                            letterSpacing: 3,
+                          ),
+                        ),
+                      ),
+                    ),
+                    SizedBox(height: base * 1.5),
+                    Text(
+                      "Tekan ENTER untuk melanjutkan",
+                      style: GoogleFonts.poppins(
+                        color: Colors.yellow.shade600,
+                        fontSize: base * 2.2,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+
+            // ⚙️ Tombol ganti Device ID
+            Positioned(
+              right: 20,
+              bottom: 20,
+              child: ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.black.withOpacity(0.6),
+                ),
+                onPressed: () {
+                  Navigator.pushReplacement(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => const DeviceInputScreen(),
+                    ),
+                  );
+                },
+                child: const Text("Ganti Device ID"),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
