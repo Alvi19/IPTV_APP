@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:iptv_app/services/device_identifier.dart';
 import '../services/api_service.dart';
 import 'splash_screen.dart';
 
@@ -20,41 +21,40 @@ class _DeviceInputScreenState extends State<DeviceInputScreen> {
   @override
   void initState() {
     super.initState();
-    // fokus otomatis
     Future.delayed(const Duration(milliseconds: 400), () {
       if (mounted) _focusNode.requestFocus();
     });
   }
 
-  /// 🔍 Cek ke DB apakah device valid
   Future<void> _checkDevice() async {
     final deviceId = _controller.text.trim();
-    if (deviceId.isEmpty) return;
+    if (deviceId.isEmpty) {
+      _showError("Device ID tidak boleh kosong");
+      return;
+    }
 
     setState(() => isLoading = true);
 
     try {
-      final response = await api.checkDevice(deviceId);
+      final response = await api.getDeviceConfigAuto(deviceId);
 
       if (response['status'] == true) {
         final data = response['data'];
-        final hotelId = data['hotel_id'];
-        final roomId = data['room_id'];
-
         print("✅ Device ditemukan di DB: $data");
 
-        // 🔹 Kirim langsung ke SplashScreen dengan membawa device_id
+        // Simpan ke lokal agar tidak input lagi
+        await DeviceIdentifier.saveDeviceId(deviceId);
+
         if (!mounted) return;
         Navigator.pushReplacement(
           context,
           MaterialPageRoute(builder: (_) => SplashScreen(deviceId: deviceId)),
         );
       } else {
-        print("❌ Device tidak ditemukan: ${response['message']}");
-        _showError(response['message']);
+        _showError(response['message'] ?? "Device tidak ditemukan di database");
       }
     } catch (e) {
-      print("❌ Gagal verifikasi device: $e");
+      print("❌ Gagal cek device: $e");
       _showError("Gagal menghubungi server");
     } finally {
       if (mounted) setState(() => isLoading = false);
@@ -71,7 +71,6 @@ class _DeviceInputScreenState extends State<DeviceInputScreen> {
     );
   }
 
-  /// 🎮 Remote control handler
   void _handleRemoteKey(RawKeyEvent event) async {
     if (event is RawKeyDownEvent) {
       final key = event.logicalKey;
@@ -83,17 +82,20 @@ class _DeviceInputScreenState extends State<DeviceInputScreen> {
         await _checkDevice();
       }
 
-      if (key == LogicalKeyboardKey.arrowUp ||
-          key == LogicalKeyboardKey.arrowDown ||
-          key == LogicalKeyboardKey.arrowLeft ||
-          key == LogicalKeyboardKey.arrowRight) {
+      if ([
+        LogicalKeyboardKey.arrowUp,
+        LogicalKeyboardKey.arrowDown,
+        LogicalKeyboardKey.arrowLeft,
+        LogicalKeyboardKey.arrowRight,
+      ].contains(key)) {
         _focusNode.requestFocus();
       }
 
-      if (key == LogicalKeyboardKey.goBack ||
-          key == LogicalKeyboardKey.escape ||
-          key == LogicalKeyboardKey.backspace) {
-        print("🔙 Exit pressed on TV remote");
+      if ([
+        LogicalKeyboardKey.goBack,
+        LogicalKeyboardKey.escape,
+        LogicalKeyboardKey.backspace,
+      ].contains(key)) {
         SystemNavigator.pop();
       }
     }
@@ -104,89 +106,109 @@ class _DeviceInputScreenState extends State<DeviceInputScreen> {
     final screen = MediaQuery.of(context).size;
     final base = (screen.width + screen.height) / 200;
 
-    return RawKeyboardListener(
-      focusNode: FocusNode(),
-      autofocus: true,
-      onKey: _handleRemoteKey,
-      child: Scaffold(
-        backgroundColor: Colors.black,
-        body: Center(
-          child: Padding(
-            padding: EdgeInsets.all(base * 3),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  'Masukkan Device ID',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: base * 3.5,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                SizedBox(height: base * 2),
-                Focus(
-                  onFocusChange: (hasFocus) {
-                    setState(() => isTVInput = hasFocus);
-                  },
-                  child: TextField(
-                    focusNode: _focusNode,
-                    controller: _controller,
-                    textAlign: TextAlign.center,
+    return GestureDetector(
+      onTap: () {
+        // Fokuskan ke TextField kalau layar disentuh
+        _focusNode.requestFocus();
+      },
+      onDoubleTap: () async {
+        // Kalau user double-tap layar → sama seperti menekan tombol "Lanjut"
+        await _checkDevice();
+      },
+      child: RawKeyboardListener(
+        focusNode: FocusNode(),
+        autofocus: true,
+        onKey: _handleRemoteKey,
+        child: Scaffold(
+          backgroundColor: Colors.black,
+          body: Center(
+            child: Padding(
+              padding: EdgeInsets.all(base * 3),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'Masukkan Device ID',
                     style: TextStyle(
                       color: Colors.white,
-                      fontSize: base * 2.5,
-                      letterSpacing: 2.0,
+                      fontSize: base * 3.5,
+                      fontWeight: FontWeight.bold,
                     ),
-                    decoration: InputDecoration(
-                      hintText: 'Contoh: STB-12345',
-                      hintStyle: const TextStyle(color: Colors.white54),
-                      filled: true,
-                      fillColor: isTVInput ? Colors.white24 : Colors.white10,
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(base),
+                  ),
+                  SizedBox(height: base * 2),
+                  Focus(
+                    onFocusChange: (hasFocus) {
+                      setState(() => isTVInput = hasFocus);
+                    },
+                    child: TextField(
+                      focusNode: _focusNode,
+                      controller: _controller,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: base * 2.5,
+                        letterSpacing: 2.0,
                       ),
-                    ),
-                  ),
-                ),
-                SizedBox(height: base * 3),
-                ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.yellow.shade700,
-                    padding: EdgeInsets.symmetric(
-                      horizontal: base * 8,
-                      vertical: base * 1.8,
-                    ),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(base),
-                    ),
-                  ),
-                  onPressed: isLoading ? null : _checkDevice,
-                  child: isLoading
-                      ? SizedBox(
-                          height: base * 2.5,
-                          width: base * 2.5,
-                          child: const CircularProgressIndicator(
-                            color: Colors.black,
-                          ),
-                        )
-                      : Text(
-                          "LANJUT",
-                          style: TextStyle(
-                            color: Colors.black,
-                            fontWeight: FontWeight.bold,
-                            fontSize: base * 2.2,
-                            letterSpacing: 1.2,
-                          ),
+                      decoration: InputDecoration(
+                        hintText: 'Contoh: STB-A-1',
+                        hintStyle: const TextStyle(color: Colors.white54),
+                        filled: true,
+                        fillColor: isTVInput ? Colors.white24 : Colors.white10,
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(base),
                         ),
-                ),
-                SizedBox(height: base * 4),
-                Text(
-                  'Gunakan remote (OK) atau keyboard (Enter) untuk melanjutkan',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: Colors.white70, fontSize: base * 1.8),
-                ),
-              ],
+                      ),
+                      onSubmitted: (_) async =>
+                          await _checkDevice(), // enter di keyboard sentuh
+                    ),
+                  ),
+                  SizedBox(height: base * 3),
+                  GestureDetector(
+                    onTap: () async {
+                      if (!isLoading) await _checkDevice();
+                    },
+                    child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.yellow.shade700,
+                        padding: EdgeInsets.symmetric(
+                          horizontal: base * 8,
+                          vertical: base * 1.8,
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(base),
+                        ),
+                      ),
+                      onPressed: isLoading ? null : _checkDevice,
+                      child: isLoading
+                          ? SizedBox(
+                              height: base * 2.5,
+                              width: base * 2.5,
+                              child: const CircularProgressIndicator(
+                                color: Colors.black,
+                              ),
+                            )
+                          : Text(
+                              "LANJUT",
+                              style: TextStyle(
+                                color: Colors.black,
+                                fontWeight: FontWeight.bold,
+                                fontSize: base * 2.2,
+                                letterSpacing: 1.2,
+                              ),
+                            ),
+                    ),
+                  ),
+                  SizedBox(height: base * 4),
+                  Text(
+                    'Gunakan remote (OK) atau sentuh layar untuk melanjutkan',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: Colors.white70,
+                      fontSize: base * 1.8,
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         ),

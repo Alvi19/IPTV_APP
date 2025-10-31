@@ -325,11 +325,14 @@ class _IdleScreenState extends State<IdleScreen>
             ),
 
             // 🔘 Tombol ENTER (PULSE ANIMASI)
+            // 🔘 Tombol ENTER (PULSE ANIMASI) — Sekarang di kiri bawah
             Positioned(
-              bottom: base * 12,
+              bottom: base * 8,
+              left: base * 6,
               child: GestureDetector(
                 onTap: () async => _goToLauncher(context),
                 child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     ScaleTransition(
                       scale: Tween(begin: 0.9, end: 1.1).animate(
@@ -340,17 +343,17 @@ class _IdleScreenState extends State<IdleScreen>
                       ),
                       child: Container(
                         padding: EdgeInsets.symmetric(
-                          horizontal: base * 8,
-                          vertical: base * 2.2,
+                          horizontal: base * 6,
+                          vertical: base * 1.8,
                         ),
                         decoration: BoxDecoration(
                           color: Colors.yellow.shade700,
                           borderRadius: BorderRadius.circular(base * 2),
                           boxShadow: [
                             BoxShadow(
-                              color: Colors.yellow.withOpacity(0.5),
-                              blurRadius: 20,
-                              spreadRadius: 3,
+                              color: Colors.yellow.withOpacity(0.4),
+                              blurRadius: 15,
+                              spreadRadius: 2,
                             ),
                           ],
                         ),
@@ -358,19 +361,19 @@ class _IdleScreenState extends State<IdleScreen>
                           "ENTER",
                           style: GoogleFonts.poppins(
                             color: Colors.black,
-                            fontSize: base * 3.5,
+                            fontSize: base * 3.0,
                             fontWeight: FontWeight.bold,
-                            letterSpacing: 3,
+                            letterSpacing: 2,
                           ),
                         ),
                       ),
                     ),
-                    SizedBox(height: base * 1.5),
+                    SizedBox(height: base * 1.2),
                     Text(
                       "Tekan ENTER untuk melanjutkan",
                       style: GoogleFonts.poppins(
                         color: Colors.yellow.shade600,
-                        fontSize: base * 2.2,
+                        fontSize: base * 2.0,
                       ),
                     ),
                   ],
@@ -378,25 +381,25 @@ class _IdleScreenState extends State<IdleScreen>
               ),
             ),
 
-            // ⚙️ Tombol ganti Device ID
-            Positioned(
-              right: 20,
-              bottom: 20,
-              child: ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.black.withOpacity(0.6),
-                ),
-                onPressed: () {
-                  Navigator.pushReplacement(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => const DeviceInputScreen(),
-                    ),
-                  );
-                },
-                child: const Text("Ganti Device ID"),
-              ),
-            ),
+            // // ⚙️ Tombol ganti Device ID
+            // Positioned(
+            //   right: 20,
+            //   bottom: 20,
+            //   child: ElevatedButton(
+            //     style: ElevatedButton.styleFrom(
+            //       backgroundColor: Colors.black.withOpacity(0.6),
+            //     ),
+            //     onPressed: () {
+            //       Navigator.pushReplacement(
+            //         context,
+            //         MaterialPageRoute(
+            //           builder: (_) => const DeviceInputScreen(),
+            //         ),
+            //       );
+            //     },
+            //     child: const Text("Ganti Device ID"),
+            //   ),
+            // ),
           ],
         ),
       ),

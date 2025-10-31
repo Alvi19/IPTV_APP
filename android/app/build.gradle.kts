@@ -8,7 +8,7 @@ plugins {
 android {
     namespace = "com.example.iptv_app"
     compileSdk = flutter.compileSdkVersion
-    ndkVersion = flutter.ndkVersion
+    ndkVersion = "27.0.12077973"
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
@@ -23,8 +23,8 @@ android {
         applicationId = "com.example.iptv_app"
         minSdk = 29
         targetSdk = 34
-        versionCode = flutter.versionCode
-        versionName = flutter.versionName
+        versionCode = 1
+        versionName = "1.0"
     }
 
     buildTypes {

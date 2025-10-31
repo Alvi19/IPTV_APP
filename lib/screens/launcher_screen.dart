@@ -53,13 +53,13 @@ class _LauncherScreenState extends State<LauncherScreen> {
   final List<Map<String, dynamic>> menuItems = const [
     {'icon': Icons.apartment, 'label': 'Hotel Info'},
     {'icon': Icons.tv, 'label': 'TV'},
-    {'icon': Icons.music_note, 'label': 'Cubmu'},
-    {'icon': Icons.restaurant, 'label': 'Restaurant'},
-    // {'icon': Icons.wifi, 'label': 'Wifi'},
     {'icon': Icons.play_circle_fill, 'label': 'Youtube'},
     {'icon': Icons.child_care, 'label': 'Youtube Kids'},
     {'icon': Icons.movie, 'label': 'Netflix'},
-    {'icon': Icons.video_collection, 'label': 'Vidio.com'},
+    {'icon': Icons.video_library, 'label': 'Vidio'},
+    {'icon': Icons.movie_creation, 'label': 'Disney+'},
+    {'icon': Icons.live_tv, 'label': 'Prime Video'},
+    {'icon': Icons.music_note, 'label': 'Spotify'},
   ];
 
   @override
@@ -288,34 +288,63 @@ class _LauncherScreenState extends State<LauncherScreen> {
     }
   }
 
-  Future<void> _openAppOrWeb({
-    required String appUrl,
-    required String webUrl,
+  Future<void> _openAndroidApp(
+    String packageName, [
+    String? activityName,
+  ]) async {
+    try {
+      final intent = AndroidIntent(
+        action: 'android.intent.action.MAIN',
+        package: packageName,
+        componentName: activityName != null
+            ? '$packageName$activityName'
+            : null,
+        flags: <int>[Flag.FLAG_ACTIVITY_NEW_TASK],
+      );
+
+      await intent.launch();
+      print('✅ Membuka aplikasi $packageName');
+    } catch (e) {
+      print('❌ Gagal membuka aplikasi $packageName: $e');
+    }
+  }
+
+  Future<void> _openAppByComponent({
+    required String package,
+    required String activity,
   }) async {
     try {
-      final Uri appUri = Uri.parse(appUrl);
-      final Uri webUri = Uri.parse(webUrl);
-
-      // Cek apakah aplikasi terpasang
-      if (await canLaunchUrl(appUri)) {
-        await launchUrl(appUri, mode: LaunchMode.externalApplication);
-        print('✅ Membuka aplikasi: $appUrl');
-      } else {
-        print('⚠️ App tidak terpasang, buka web fallback...');
-        await launchUrl(webUri, mode: LaunchMode.externalApplication);
-      }
+      final intent = AndroidIntent(
+        action: 'android.intent.action.MAIN',
+        package: package,
+        componentName: '$package$activity',
+        flags: <int>[
+          Flag.FLAG_ACTIVITY_NEW_TASK,
+          Flag.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED,
+        ],
+      );
+      await intent.launch();
+      print('✅ Membuka aplikasi: $package$activity');
     } catch (e) {
-      print('❌ Gagal membuka app/web: $e');
+      print('❌ Gagal membuka aplikasi $package$activity: $e');
     }
   }
 
   void _handleMenuTap(Map<String, dynamic> item) async {
     switch (item['label']) {
       case 'Hotel Info':
+        if (hotelId == null || roomId == null) {
+          print("⚠️ Data belum siap, tunggu hotelId/roomId...");
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text("Sedang menyiapkan data...")),
+          );
+          return;
+        }
+
         Navigator.push(
           context,
-          MaterialPageRoute(
-            builder: (_) => HotelInfoScreen(
+          PageRouteBuilder(
+            pageBuilder: (_, __, ___) => HotelInfoScreen(
               hotelId: hotelId,
               roomId: roomId,
               deviceId: deviceId,
@@ -324,35 +353,66 @@ class _LauncherScreenState extends State<LauncherScreen> {
               roomNumber: roomNumber,
               backgroundUrl: backgroundUrl,
             ),
+            transitionsBuilder: (_, animation, __, child) =>
+                FadeTransition(opacity: animation, child: child),
           ),
         );
         break;
 
       case 'TV':
-        await _openTransVisionApp();
+        await _openAppByComponent(
+          package: 'com.livetv.trvddm',
+          activity: '.Login',
+        );
         break;
 
       case 'Youtube':
-        await _launchExternalApp('vnd.youtube://');
+        await _openAppByComponent(
+          package: 'com.google.android.youtube',
+          activity: '.HomeActivity',
+        );
         break;
 
       case 'Youtube Kids':
-        await _openAppOrWeb(
-          appUrl: 'vnd.youtube.kids://',
-          webUrl: 'https://www.youtubekids.com/',
+        await _openAppByComponent(
+          package: 'com.google.android.apps.youtube.kids',
+          activity: '.home.activity.HomeActivity',
         );
         break;
 
       case 'Netflix':
-        await _launchExternalApp('https://www.netflix.com/id-en/');
+        await _openAppByComponent(
+          package: 'com.netflix.mediaclient',
+          activity: '.ui.launch.UIWebViewActivity',
+        );
         break;
 
-      case 'Vidio.com':
-        await _launchExternalApp('https://www.vidio.com/');
+      case 'Vidio':
+        await _openAppByComponent(
+          package: 'com.vidio.android',
+          activity: '.ui.splash.SplashActivity',
+        );
         break;
 
-      case 'Cubmu':
-        await _launchExternalApp('https://cubmu.com/');
+      case 'Disney+':
+        await _openAppByComponent(
+          package: 'in.startv.hotstar.dplus',
+          activity: '.ui.splash.SplashActivity',
+        );
+        break;
+
+      case 'Prime Video':
+        await _openAppByComponent(
+          package: 'com.amazon.avod.thirdpartyclient',
+          activity: '.SplashScreenActivity',
+        );
+        break;
+
+      case 'Spotify':
+        await _openAppByComponent(
+          package: 'com.spotify.music',
+          activity: '.MainActivity',
+        );
         break;
 
       default:
