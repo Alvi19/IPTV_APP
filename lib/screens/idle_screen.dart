@@ -71,12 +71,6 @@ class _IdleScreenState extends State<IdleScreen>
       customerName = room['guest_name'];
       roomNumber = room['number']?.toString();
 
-      if (videoUrl == null || videoUrl!.isEmpty) {
-        videoUrl =
-            "http://10.87.232.10:8000/storage/uploads/videos/default_video.mp4";
-        print("🎬 Menggunakan video default: $videoUrl");
-      }
-
       await _initializeVideo(videoUrl!);
       await _initializeMqtt();
     } catch (e) {
@@ -135,9 +129,16 @@ class _IdleScreenState extends State<IdleScreen>
         final event = data['event'];
         print("⚡ MQTT Event: $event | Payload: $data");
 
+        // Menangani pembaruan video
         if (event == 'video_update' && data['video_url'] != null) {
-          await _initializeVideo(data['video_url']);
-        } else if (event == 'launcher_update' ||
+          final newVideoUrl = data['video_url'];
+          setState(() {
+            videoUrl = newVideoUrl; // Memperbarui URL video
+          });
+          await _initializeVideo(newVideoUrl); // Menampilkan video baru
+        }
+        // Menangani pembaruan lainnya (misalnya, checkin/checkout)
+        else if (event == 'launcher_update' ||
             event == 'checkin' ||
             event == 'checkout') {
           setState(() {
@@ -256,67 +257,105 @@ class _IdleScreenState extends State<IdleScreen>
               left: base * 2,
               right: base * 2,
               child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                mainAxisAlignment:
+                    MainAxisAlignment.center, // Mengubah alignment ke tengah
                 children: [
                   if (logoUrl != null && logoUrl!.isNotEmpty)
                     Image.network(logoUrl!, width: base * 18),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      const ClockWidget(),
-                      SizedBox(height: base * 0.4),
-                      Text(
-                        formattedDate,
-                        style: GoogleFonts.poppins(
-                          color: Colors.white.withOpacity(0.9),
-                          fontSize: base * 2.0,
-                        ),
-                      ),
-                    ],
+                ],
+              ),
+            ),
+
+            // Mengubah posisi jam dan tanggal ke kiri
+            Positioned(
+              top: base * 2,
+              left: base * 2, // Menempatkan jam dan tanggal di kiri
+              child: Column(
+                crossAxisAlignment:
+                    CrossAxisAlignment.start, // Mengatur agar teks rata kiri
+                children: [
+                  const ClockWidget(
+                    color: Color(
+                      0xFFC3A354,
+                    ), // Menambahkan warna emas pada ClockWidget
+                  ),
+                  SizedBox(height: base * 0.4),
+                  Text(
+                    formattedDate,
+                    style: GoogleFonts.poppins(
+                      color: Color(0xFFC3A354).withOpacity(0.9),
+                      fontSize: base * 2.0,
+                    ),
                   ),
                 ],
               ),
             ),
 
-            // 🧍 Guest info
+            // 🧍 Guest info — Desain dengan Gradasi dan Efek Premium
             Positioned(
-              right: 0,
-              bottom: base * 5,
+              right: base * 4,
+              bottom: base * 4, // Mengurangi jarak sedikit agar lebih rapat
               child: Container(
                 padding: EdgeInsets.symmetric(
-                  vertical: base * 1.2,
-                  horizontal: base * 15,
+                  vertical: base * 0.8, // Mengurangi sedikit padding vertikal
+                  horizontal: base * 5, // Mengurangi sedikit padding horizontal
                 ),
                 decoration: BoxDecoration(
-                  color: Colors.black.withOpacity(0.55),
-                  borderRadius: BorderRadius.only(
-                    topLeft: Radius.circular(base * 5.5),
-                    bottomLeft: Radius.circular(base * 5.5),
+                  // Menghilangkan background transparan dan hanya menggunakan border radius
+                  borderRadius: BorderRadius.circular(
+                    base * 4,
+                  ), // Memperkecil border radius untuk efek yang lebih proporsional
+                  border: Border.all(
+                    color: Colors.white.withOpacity(
+                      0.6,
+                    ), // Warna border dengan sedikit transparansi
+                    width: 2, // Ketebalan border
                   ),
                 ),
                 child: Column(
+                  crossAxisAlignment:
+                      CrossAxisAlignment.start, // Agar teks rata kiri
                   children: [
+                    // Teks statis tanpa animasi
                     Text(
                       "Wilujeng Sumping,",
                       style: GoogleFonts.poppins(
                         color: Colors.white,
-                        fontSize: base * 2.9,
+                        fontSize:
+                            base *
+                            2.5, // Mengurangi ukuran font agar lebih proporsional
                         fontStyle: FontStyle.italic,
+                        letterSpacing:
+                            1.5, // Menambahkan jarak antar huruf untuk kesan lebih modern dan elegan
                       ),
                     ),
+                    SizedBox(
+                      height: base * 0.3,
+                    ), // Menambahkan jarak antara teks
                     Text(
                       guest,
                       style: GoogleFonts.poppins(
-                        color: Colors.white,
-                        fontSize: base * 3.5,
+                        color: Color(0xFFC3A354).withOpacity(0.9),
+                        fontSize:
+                            base *
+                            3.8, // Mengurangi ukuran nama tamu agar lebih proporsional
                         fontWeight: FontWeight.bold,
+                        letterSpacing:
+                            1.5, // Memberikan kesan lebih modern dan jelas
                       ),
                     ),
+                    SizedBox(
+                      height: base * 0.3,
+                    ), // Menambahkan jarak antara teks
                     Text(
                       "Room $room",
                       style: GoogleFonts.poppins(
-                        color: Colors.white70,
-                        fontSize: base * 2.5,
+                        color: Colors.amberAccent,
+                        fontSize:
+                            base *
+                            2.4, // Mengurangi ukuran teks room agar lebih proporsional
+                        letterSpacing:
+                            1.2, // Mempertahankan jarak antar huruf untuk kesan modern
                       ),
                     ),
                   ],
@@ -324,8 +363,6 @@ class _IdleScreenState extends State<IdleScreen>
               ),
             ),
 
-            // 🔘 Tombol ENTER (PULSE ANIMASI)
-            // 🔘 Tombol ENTER (PULSE ANIMASI) — Sekarang di kiri bawah
             Positioned(
               bottom: base * 8,
               left: base * 6,
@@ -334,72 +371,60 @@ class _IdleScreenState extends State<IdleScreen>
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    ScaleTransition(
-                      scale: Tween(begin: 0.9, end: 1.1).animate(
-                        CurvedAnimation(
-                          parent: _pulseController,
-                          curve: Curves.easeInOut,
+                    // Card tetap statis, hanya teks yang memiliki animasi gerak
+                    Card(
+                      color: Colors.transparent,
+                      elevation: 10,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(base * 3),
+                        side: BorderSide(
+                          color: Colors.yellow.withOpacity(0.7),
+                          width: 2,
                         ),
                       ),
-                      child: Container(
+                      child: Padding(
                         padding: EdgeInsets.symmetric(
-                          horizontal: base * 6,
-                          vertical: base * 1.8,
+                          horizontal: base * 5,
+                          vertical: base * 2.2,
                         ),
-                        decoration: BoxDecoration(
-                          color: Colors.yellow.shade700,
-                          borderRadius: BorderRadius.circular(base * 2),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.yellow.withOpacity(0.4),
-                              blurRadius: 15,
-                              spreadRadius: 2,
+                        child: ScaleTransition(
+                          scale: Tween(begin: 0.9, end: 1.1).animate(
+                            CurvedAnimation(
+                              parent: _pulseController,
+                              curve: Curves.easeInOut,
                             ),
-                          ],
-                        ),
-                        child: Text(
-                          "ENTER",
-                          style: GoogleFonts.poppins(
-                            color: Colors.black,
-                            fontSize: base * 3.0,
-                            fontWeight: FontWeight.bold,
-                            letterSpacing: 2,
+                          ),
+                          child: FadeTransition(
+                            opacity: _pulseController,
+                            child: Text(
+                              "Please To Continue",
+                              style: GoogleFonts.lora(
+                                color: Color.fromARGB(
+                                  255,
+                                  254,
+                                  183,
+                                  1,
+                                ).withOpacity(0.9),
+                                fontSize: base * 2.5,
+                                fontWeight: FontWeight.bold,
+                                letterSpacing: 2.5,
+                                shadows: [
+                                  Shadow(
+                                    color: Colors.yellow.withOpacity(0.7),
+                                    blurRadius: 20,
+                                    offset: Offset(0, 0),
+                                  ),
+                                ],
+                              ),
+                            ),
                           ),
                         ),
-                      ),
-                    ),
-                    SizedBox(height: base * 1.2),
-                    Text(
-                      "Tekan ENTER untuk melanjutkan",
-                      style: GoogleFonts.poppins(
-                        color: Colors.yellow.shade600,
-                        fontSize: base * 2.0,
                       ),
                     ),
                   ],
                 ),
               ),
             ),
-
-            // // ⚙️ Tombol ganti Device ID
-            // Positioned(
-            //   right: 20,
-            //   bottom: 20,
-            //   child: ElevatedButton(
-            //     style: ElevatedButton.styleFrom(
-            //       backgroundColor: Colors.black.withOpacity(0.6),
-            //     ),
-            //     onPressed: () {
-            //       Navigator.pushReplacement(
-            //         context,
-            //         MaterialPageRoute(
-            //           builder: (_) => const DeviceInputScreen(),
-            //         ),
-            //       );
-            //     },
-            //     child: const Text("Ganti Device ID"),
-            //   ),
-            // ),
           ],
         ),
       ),

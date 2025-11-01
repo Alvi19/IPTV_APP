@@ -47,7 +47,6 @@ class _LauncherScreenState extends State<LauncherScreen> {
   int? hotelId;
   int? roomId;
   bool _isMqttConnected = false;
-
   String? textRunning; // 🆕 Tambahan: text berjalan dari API/MQTT
 
   final List<Map<String, dynamic>> menuItems = const [
@@ -65,8 +64,10 @@ class _LauncherScreenState extends State<LauncherScreen> {
   @override
   void initState() {
     super.initState();
+    selectedIndex = 0;
     SystemChrome.setPreferredOrientations([DeviceOrientation.landscapeLeft]);
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+    FocusManager.instance.primaryFocus?.unfocus();
     _initializeData();
   }
 
@@ -260,15 +261,6 @@ class _LauncherScreenState extends State<LauncherScreen> {
     }
   }
 
-  Future<void> _launchExternalApp(String url) async {
-    final Uri uri = Uri.parse(url);
-    if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
-      print('❌ Tidak dapat membuka aplikasi eksternal: $url');
-    } else {
-      print('✅ Membuka aplikasi eksternal: $url');
-    }
-  }
-
   Future<void> _openTransVisionApp() async {
     try {
       const packageName = 'com.livetv.trvddm';
@@ -288,62 +280,43 @@ class _LauncherScreenState extends State<LauncherScreen> {
     }
   }
 
-  Future<void> _openAndroidApp(
-    String packageName, [
-    String? activityName,
-  ]) async {
-    try {
-      final intent = AndroidIntent(
-        action: 'android.intent.action.MAIN',
-        package: packageName,
-        componentName: activityName != null
-            ? '$packageName$activityName'
-            : null,
-        flags: <int>[Flag.FLAG_ACTIVITY_NEW_TASK],
-      );
-
-      await intent.launch();
-      print('✅ Membuka aplikasi $packageName');
-    } catch (e) {
-      print('❌ Gagal membuka aplikasi $packageName: $e');
-    }
-  }
-
   Future<void> _openAppByComponent({
     required String package,
     required String activity,
   }) async {
     try {
+      // ✅ Jika activity sudah diawali titik, tambahkan package
+      final String finalActivity = activity.startsWith('.')
+          ? '$package$activity'
+          : activity; // kalau sudah full path biarkan
+
+      print('🎯 Mencoba buka: $package → $finalActivity');
+
       final intent = AndroidIntent(
         action: 'android.intent.action.MAIN',
         package: package,
-        componentName: '$package$activity',
+        componentName:
+            finalActivity, // ⬅️ Hanya kirim nama activity, bukan package + activity
         flags: <int>[
           Flag.FLAG_ACTIVITY_NEW_TASK,
           Flag.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED,
         ],
       );
+
       await intent.launch();
-      print('✅ Membuka aplikasi: $package$activity');
+      print('✅ Membuka aplikasi: $finalActivity');
     } catch (e) {
-      print('❌ Gagal membuka aplikasi $package$activity: $e');
+      print('❌ Gagal membuka aplikasi: $e');
     }
   }
 
   void _handleMenuTap(Map<String, dynamic> item) async {
     switch (item['label']) {
       case 'Hotel Info':
-        if (hotelId == null || roomId == null) {
-          print("⚠️ Data belum siap, tunggu hotelId/roomId...");
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text("Sedang menyiapkan data...")),
-          );
-          return;
-        }
-
         Navigator.push(
           context,
           PageRouteBuilder(
+            // transitionDuration: const Duration(),
             pageBuilder: (_, __, ___) => HotelInfoScreen(
               hotelId: hotelId,
               roomId: roomId,
@@ -353,8 +326,9 @@ class _LauncherScreenState extends State<LauncherScreen> {
               roomNumber: roomNumber,
               backgroundUrl: backgroundUrl,
             ),
-            transitionsBuilder: (_, animation, __, child) =>
-                FadeTransition(opacity: animation, child: child),
+            transitionsBuilder: (_, animation, __, child) {
+              return FadeTransition(opacity: animation, child: child);
+            },
           ),
         );
         break;
@@ -362,56 +336,56 @@ class _LauncherScreenState extends State<LauncherScreen> {
       case 'TV':
         await _openAppByComponent(
           package: 'com.livetv.trvddm',
-          activity: '.Login',
+          activity: 'com.livetv.trvddm.ui.main.LoginActivity',
         );
         break;
 
       case 'Youtube':
         await _openAppByComponent(
-          package: 'com.google.android.youtube',
-          activity: '.HomeActivity',
+          package: 'com.google.android.youtube.tv',
+          activity: 'com.google.android.apps.youtube.tv.activity.ShellActivity',
         );
         break;
 
       case 'Youtube Kids':
         await _openAppByComponent(
-          package: 'com.google.android.apps.youtube.kids',
-          activity: '.home.activity.HomeActivity',
+          package: 'com.google.android.youtube.tv',
+          activity: 'com.google.android.apps.youtube.tv.activity.ShellActivity',
         );
         break;
 
       case 'Netflix':
         await _openAppByComponent(
-          package: 'com.netflix.mediaclient',
-          activity: '.ui.launch.UIWebViewActivity',
+          package: 'com.netflix.ninja',
+          activity: '.MainActivity',
         );
         break;
 
       case 'Vidio':
         await _openAppByComponent(
-          package: 'com.vidio.android',
-          activity: '.ui.splash.SplashActivity',
+          package: 'com.vidio.android.tv',
+          activity: 'com.vidio.android.tv.splashscreen.SplashScreenActivity',
         );
         break;
 
       case 'Disney+':
         await _openAppByComponent(
-          package: 'in.startv.hotstar.dplus',
-          activity: '.ui.splash.SplashActivity',
+          package: 'com.disney.disneyplus',
+          activity: 'com.bamtechmedia.dominguez.main.MainActivity',
         );
         break;
 
       case 'Prime Video':
         await _openAppByComponent(
-          package: 'com.amazon.avod.thirdpartyclient',
-          activity: '.SplashScreenActivity',
+          package: 'com.amazon.amazonvideo.livingroom',
+          activity: 'com.amazon.ignition.IgnitionActivity',
         );
         break;
 
       case 'Spotify':
         await _openAppByComponent(
-          package: 'com.spotify.music',
-          activity: '.MainActivity',
+          package: 'com.spotify.tv.android',
+          activity: 'com.spotify.tv.android.SpotifyTVActivity',
         );
         break;
 
@@ -457,20 +431,6 @@ class _LauncherScreenState extends State<LauncherScreen> {
             backgroundColor: Colors.black,
             body: Stack(
               children: [
-                // AnimatedSwitcher(
-                //   duration: const Duration(milliseconds: 600),
-                //   child: (backgroundUrl != null && backgroundUrl!.isNotEmpty)
-                //       ? Image.network(
-                //           backgroundUrl!,
-                //           key: ValueKey(backgroundUrl),
-                //           fit: BoxFit.cover,
-                //           width: double.infinity,
-                //           height: double.infinity,
-                //           errorBuilder: (_, __, ___) =>
-                //               Container(color: Colors.blue),
-                //         )
-                //       : Container(color: Colors.blue),
-                // ),
                 AnimatedSwitcher(
                   duration: const Duration(milliseconds: 600),
                   switchInCurve: Curves.easeIn,
@@ -585,21 +545,56 @@ class _LauncherScreenState extends State<LauncherScreen> {
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      // 📦 Bar menu
+                      // 📦 Modern Elegant Bottom Bar (tanpa blur)
                       Container(
-                        height: barHeight,
+                        height: barHeight * 1.2,
                         width: double.infinity,
+                        margin: EdgeInsets.only(bottom: base * 0.8),
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            colors: [
+                              Colors.black.withOpacity(0.6),
+                              Colors.blueGrey.withOpacity(0.3),
+                            ],
+                            begin: Alignment.topCenter,
+                            end: Alignment.bottomCenter,
+                          ),
+                          borderRadius: BorderRadius.circular(base * 3),
+                          border: Border.all(
+                            color: Colors.white.withOpacity(0.15),
+                            width: 1,
+                          ),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.5),
+                              blurRadius: 25,
+                              spreadRadius: 2,
+                              offset: const Offset(0, 5),
+                            ),
+                          ],
+                        ),
                         child: Padding(
-                          padding: EdgeInsets.symmetric(horizontal: base * 2.5),
+                          padding: EdgeInsets.symmetric(horizontal: base * 2),
                           child: Row(
                             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+
                             children: List.generate(menuItems.length, (index) {
                               final item = menuItems[index];
                               final isSelected = selectedIndex == index;
 
+                              final glowColor =
+                                  {
+                                    'Youtube': Colors.redAccent,
+                                    'Netflix': Colors.red,
+                                    'Disney+': Colors.lightBlueAccent,
+                                    'Spotify': Colors.greenAccent,
+                                    'Vidio': Colors.purpleAccent,
+                                    'Prime Video': Colors.indigoAccent,
+                                  }[item['label']] ??
+                                  Colors.cyanAccent;
+
                               return Focus(
-                                autofocus:
-                                    index == 0, // Fokus awal di item pertama
+                                autofocus: index == 0,
                                 onKeyEvent: (node, event) {
                                   if (event is KeyDownEvent) {
                                     if (event.logicalKey ==
@@ -624,7 +619,7 @@ class _LauncherScreenState extends State<LauncherScreen> {
                                             LogicalKeyboardKey.enter ||
                                         event.logicalKey ==
                                             LogicalKeyboardKey.select) {
-                                      _handleMenuTap(item);
+                                      _handleMenuTap(menuItems[selectedIndex]);
                                       return KeyEventResult.handled;
                                     }
                                   }
@@ -635,48 +630,56 @@ class _LauncherScreenState extends State<LauncherScreen> {
                                   onTapDown: (_) =>
                                       setState(() => selectedIndex = index),
                                   child: AnimatedContainer(
-                                    duration: const Duration(milliseconds: 200),
-                                    padding: EdgeInsets.all(base * 0.5),
+                                    duration: const Duration(milliseconds: 250),
+                                    curve: Curves.easeOut,
+                                    padding: EdgeInsets.all(base * 0.8),
                                     decoration: BoxDecoration(
+                                      shape: BoxShape.circle,
                                       color: isSelected
-                                          ? Colors.white.withOpacity(0.2)
+                                          ? Colors.white.withOpacity(0.1)
                                           : Colors.transparent,
-                                      borderRadius: BorderRadius.circular(base),
-                                      border: isSelected
-                                          ? Border.all(
-                                              color: Colors.white54,
-                                              width: 2,
-                                            )
-                                          : null,
+                                      boxShadow: isSelected
+                                          ? [
+                                              BoxShadow(
+                                                color: glowColor.withOpacity(
+                                                  0.7,
+                                                ),
+                                                blurRadius: 20,
+                                                spreadRadius: 1,
+                                              ),
+                                            ]
+                                          : [],
                                     ),
                                     child: Column(
                                       mainAxisSize: MainAxisSize.min,
                                       children: [
                                         AnimatedScale(
-                                          scale: isSelected ? 1.15 : 1.0,
+                                          scale: isSelected ? 1.25 : 1.0,
                                           duration: const Duration(
-                                            milliseconds: 150,
+                                            milliseconds: 200,
                                           ),
                                           child: Icon(
                                             item['icon'],
                                             color: isSelected
                                                 ? Colors.white
-                                                : Colors.white70,
-                                            size: iconSize,
+                                                : Colors.white.withOpacity(0.7),
+                                            size: iconSize * 0.9,
                                           ),
                                         ),
-                                        SizedBox(height: base * 0.6),
-                                        AnimatedDefaultTextStyle(
+                                        const SizedBox(height: 6),
+                                        AnimatedOpacity(
                                           duration: const Duration(
-                                            milliseconds: 200,
+                                            milliseconds: 250,
                                           ),
-                                          style: GoogleFonts.poppins(
-                                            color: isSelected
-                                                ? Colors.white
-                                                : Colors.white70,
-                                            fontSize: fontSize,
+                                          opacity: isSelected ? 1.0 : 0.0,
+                                          child: Text(
+                                            item['label'],
+                                            style: GoogleFonts.poppins(
+                                              color: Colors.white,
+                                              fontSize: fontSize * 1.1,
+                                              fontWeight: FontWeight.w500,
+                                            ),
                                           ),
-                                          child: Text(item['label']),
                                         ),
                                       ],
                                     ),
@@ -706,7 +709,7 @@ class _LauncherScreenState extends State<LauncherScreen> {
   }
 }
 
-/// 🎬 Widget untuk text berjalan otomatis (running text)
+/// 🎬 Widget untuk text berjalan otomatis (running text modern)
 class _RunningTextBar extends StatefulWidget {
   final String text;
   final double fontSize;
@@ -717,39 +720,46 @@ class _RunningTextBar extends StatefulWidget {
   State<_RunningTextBar> createState() => _RunningTextBarState();
 }
 
-class _RunningTextBarState extends State<_RunningTextBar> {
-  final ScrollController _scrollController = ScrollController();
-  Timer? _timer;
+class _RunningTextBarState extends State<_RunningTextBar>
+    with SingleTickerProviderStateMixin {
+  late final ScrollController _scrollController;
+  late final AnimationController _animationController;
+  late final double _scrollSpeed; // pixel per second
 
   @override
   void initState() {
     super.initState();
+    _scrollController = ScrollController();
+    _scrollSpeed = 40; // 🌟 Kecepatan gerak (semakin kecil = lebih lambat)
+
     WidgetsBinding.instance.addPostFrameCallback((_) => _startScrolling());
   }
 
   void _startScrolling() {
-    const double scrollSpeed = 50; // pixel per second
-    const Duration frameRate = Duration(milliseconds: 10);
+    if (!_scrollController.hasClients) return;
+    final textWidth = _scrollController.position.maxScrollExtent;
+    final duration = Duration(
+      milliseconds: ((textWidth / _scrollSpeed) * 1000).toInt(),
+    );
 
-    double position = 0;
-    _timer = Timer.periodic(frameRate, (timer) {
-      if (!_scrollController.hasClients) return;
-
-      position += scrollSpeed * frameRate.inMilliseconds / 1000;
-      if (position >= _scrollController.position.maxScrollExtent + 40) {
-        // Reset ke awal untuk efek loop
-        position = 0;
-        _scrollController.jumpTo(0);
-      } else {
-        _scrollController.jumpTo(position);
-      }
-    });
+    _animationController = AnimationController(vsync: this, duration: duration)
+      ..addListener(() {
+        if (_scrollController.hasClients) {
+          _scrollController.jumpTo(_animationController.value * textWidth);
+        }
+      })
+      ..addStatusListener((status) {
+        if (status == AnimationStatus.completed) {
+          _scrollController.jumpTo(0);
+          _animationController.forward(from: 0);
+        }
+      })
+      ..forward();
   }
 
   @override
   void dispose() {
-    print("🧹 LauncherScreen disposed");
-    _timer?.cancel();
+    _animationController.dispose();
     _scrollController.dispose();
     super.dispose();
   }
@@ -757,35 +767,72 @@ class _RunningTextBarState extends State<_RunningTextBar> {
   @override
   Widget build(BuildContext context) {
     return Container(
-      // color: Colors.black.withOpacity(0.8),
-      padding: const EdgeInsets.symmetric(vertical: 6),
-      height: widget.fontSize * 2.5,
+      height: widget.fontSize * 3.2,
       width: double.infinity,
+      margin: const EdgeInsets.only(top: 8),
+      padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 16),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            Colors.black.withOpacity(0.6),
+            Colors.blueGrey.withOpacity(0.3),
+          ],
+          begin: Alignment.centerLeft,
+          end: Alignment.centerRight,
+        ),
+        borderRadius: BorderRadius.circular(30),
+        border: Border.all(color: Colors.white.withOpacity(0.1), width: 1),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.4),
+            blurRadius: 10,
+            offset: const Offset(0, -2),
+          ),
+        ],
+      ),
       child: ListView(
         controller: _scrollController,
         scrollDirection: Axis.horizontal,
         physics: const NeverScrollableScrollPhysics(),
         children: [
-          const SizedBox(width: 40),
-          Text(
-            widget.text,
-            style: GoogleFonts.poppins(
-              color: Colors.white,
-              fontSize: widget.fontSize,
-              letterSpacing: 1.0,
-            ),
+          Row(
+            children: [
+              const SizedBox(width: 40),
+              _buildText(widget.text),
+              const SizedBox(width: 80),
+              _buildText(widget.text),
+              const SizedBox(width: 40),
+            ],
           ),
-          const SizedBox(width: 80),
-          Text(
-            widget.text,
-            style: GoogleFonts.poppins(
-              color: Colors.white,
-              fontSize: widget.fontSize,
-              letterSpacing: 1.0,
-            ),
-          ),
-          const SizedBox(width: 40),
         ],
+      ),
+    );
+  }
+
+  Widget _buildText(String text) {
+    return ShaderMask(
+      shaderCallback: (bounds) => const LinearGradient(
+        colors: [
+          Color(0xFF00C2FF), // 💎 Biru terang elegan (Hotel Accent)
+          Color(0xFFFFFFFF), // 🤍 Putih lembut di ujung
+        ],
+        begin: Alignment.centerLeft,
+        end: Alignment.centerRight,
+      ).createShader(bounds),
+      child: Text(
+        text,
+        style: GoogleFonts.poppins(
+          color: Colors.white,
+          fontSize: widget.fontSize,
+          fontWeight: FontWeight.w500,
+          letterSpacing: 1.2,
+          shadows: [
+            Shadow(
+              color: const Color(0xFF00C2FF).withOpacity(0.5),
+              blurRadius: 8,
+            ),
+          ],
+        ),
       ),
     );
   }
